@@ -1,7 +1,3 @@
-Sure! Here’s a sample `README.md` for your tool **MoveSync**, assuming it's a command-line PostgreSQL migration utility using Python:
-
----
-
 # MoveSync
 
 **MoveSync** is a lightweight IT migration tool designed to streamline database migrations. Currently, it supports **PostgreSQL** migrations and offers a scriptable, customizable interface for managing data transfer between PostgreSQL instances.
@@ -20,7 +16,7 @@ Sure! Here’s a sample `README.md` for your tool **MoveSync**, assuming it's a 
 
 ## Requirements
 
-* Python 3.6+
+* Python 3.10+
 * PostgreSQL access (source and destination)
 * pip (Python package installer)
 
@@ -31,7 +27,7 @@ Sure! Here’s a sample `README.md` for your tool **MoveSync**, assuming it's a 
 Clone the repository and install dependencies:
 
 ```bash
-git clone https://github.com/yourusername/movesync.git
+https://github.com/sathu08/MoveSync.git
 cd movesync
 pip install -r requirements.txt
 ```
@@ -41,16 +37,41 @@ pip install -r requirements.txt
 ## Usage
 
 ```bash
-python movesync.py [options]
+python MoveSync.py [--database=<dbname>] [--info=<client>] [--start] [--help] [-y] [--reports] [--setup] [--startmanual]
 ```
 
-Options are defined using `docopt`. Example usage might look like:
+### Options
+
+* `--database=<dbname>`: Specify the name of the database to migrate
+* `--info=<client>`: Provide client-specific metadata
+* `--start`: Begin the automated migration process
+* `--startmanual`: Start migration in manual mode
+* `--reports`: Generate migration reports
+* `--setup`: Run setup procedures before starting
+* `-y`: Auto-confirm prompts
+* `--help`: Show help message and exit
+
+---
+
+## Example
+
+Start an automated migration for a client’s database:
 
 ```bash
-python movesync.py --source-db postgresql://user:pass@host1/db1 --dest-db postgresql://user:pass@host2/db2
+python MoveSync.py --database=mydb --info=clientA --start -y
 ```
 
-You can define your CLI arguments as needed in the script.
+Generate reports after migration:
+
+```bash
+python MoveSync.py --database=mydb --reports
+```
+
+Run a manual migration setup:
+
+```bash
+python MoveSync.py --database=mydb --setup --startmanual
+```
 
 ---
 
@@ -58,27 +79,14 @@ You can define your CLI arguments as needed in the script.
 
 ```
 movesync/
-├── movesync.py
-├── requirements.txt
-└── README.md
+├── requirements.txt           # Python dependencies
+├── README.md                  # Project documentation
+├── db_info.py                 # Python file to read/handle DB info
+├── migrate_postgres.sh        # Shell script for handling migration logic
+├── MoveSync.py                # Core logic for performing the migration
+├── db_info_json/              # Folder containing DB configuration
+│   └── postgres_info.json     # JSON config with PostgreSQL DB info
 ```
-
----
-
-## Example
-
-Migrate all tables from a source PostgreSQL database to a destination:
-
-```bash
-python movesync.py --source-db postgresql://user:pass@localhost/source_db \
-                   --dest-db postgresql://user:pass@localhost/dest_db
-```
-
----
-
-## License
-
-This project is licensed under the MIT License.
 
 ---
 
@@ -91,4 +99,4 @@ This project is licensed under the MIT License.
 
 ---
 
-Let me know if you'd like me to adjust this for actual CLI usage or add sections like *Contributing*, *Changelog*, or *Docker support*.
+Let me know if you'd like to include sample output, error handling notes, or contribution guidelines.
