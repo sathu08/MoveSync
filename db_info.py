@@ -106,73 +106,109 @@ def fetch_db_info(database_url: str, database_name: str, client: str):
 
     print(f"[DONE] Excel and Text File saved at {os.path.abspath(output_file)}")
 
-def compare_row_counts(source_engine: str, target_engine: str):
+def get_tables(engine):
+    with engine.connect() as conn:
+        return conn.execute(text("""
+            SELECT schemaname, relname
+            FROM pg_stat_user_tables
+            ORDER BY schemaname, relname;
+        """)).fetchall()
+
+def count_rows(schema, table, engine, side):
+    result = {
+        "schema_name": schema,
+        "table_name": table,
+        f"estimated_rows_{side}": None,
+        f"{side}_error": None
+    }
+    try:
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            query = text(f'SELECT COUNT(*) FROM "{schema}"."{table}"')
+            result[f"estimated_rows_{side}"] = conn.execute(query).scalar()
+    except Exception as e:
+        result[f"{side}_error"] = str(e)
+    return result
+
+def compare_row_counts(source_engine: str, target_engine: str, max_workers=10):
     """
     Compare row counts between source and target PostgreSQL databases and save results to Excel.
     """
     # Create output directory if it doesn't exist
     os.makedirs('./output_folder', exist_ok=True)
-    output_file = f"output_folder/reports"
-    
+    output_file = os.path.join("output_folder", "reports")
+
     # Clear old output files
-    open(f'{output_file}.txt', "w").close()
+    open(f"{output_file}.txt", "w").close()
     if os.path.exists(f"{output_file}.xlsx"):
         os.remove(f"{output_file}.xlsx")
-    
+
     # Create a basic Excel file as a placeholder
     pd.DataFrame(["MoveSync"]).to_excel(f"{output_file}.xlsx", index=False, sheet_name="MoveSync")
 
-    with source_engine.connect() as source_conn, target_engine.connect() as target_conn:
-        try:
-            source_conn.execute(text("ANALYZE;"))
-            target_conn.execute(text("ANALYZE;"))
-        except Exception as e:
-            print(f"[WARN] ANALYZE failed: {e}")
+    # Fetch table lists
+    source_tables = set(get_tables(source_engine))
+    target_tables = set(get_tables(target_engine))
+    all_tables = sorted(source_tables.union(target_tables))
+    total_tables = len(all_tables)
+    print(f"Total unique tables (source + target): {total_tables}")
 
-        # Fetch row counts from source
-        source_result = source_conn.execute(text("""
-            SELECT schemaname AS schema_name, relname AS table_name, n_live_tup AS estimated_rows
-            FROM pg_stat_user_tables
-            ORDER BY schema_name, table_name;
-        """))
-        source_df = pd.DataFrame(source_result.fetchall(), columns=source_result.keys())
+    rows = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = []
 
-        # Fetch row counts from target
-        target_result = target_conn.execute(text("""
-            SELECT schemaname AS schema_name, relname AS table_name, n_live_tup AS estimated_rows
-            FROM pg_stat_user_tables
-            ORDER BY schema_name, table_name;
-        """))
-        target_df = pd.DataFrame(target_result.fetchall(), columns=target_result.keys())
+        for schema, table in all_tables:
+            futures.append(executor.submit(count_rows, schema, table, source_engine, "source"))
+            futures.append(executor.submit(count_rows, schema, table, target_engine, "target"))
 
-    # Merge dataframes on schema and table
-    merged_df = pd.merge(
-        source_df,
-        target_df,
-        on=["schema_name", "table_name"],
-        suffixes=("_source", "_target"),
-        how="outer"
-    )
+        for i, future in enumerate(as_completed(futures), start=1):
+            print(f"[{i}/{len(futures)}] Started: {key[0]}.{key[1]}")
+            result = future.result()
+            key = (result["schema_name"], result["table_name"])
+            if key not in rows:
+                rows[key] = {
+                    "schema_name": key[0],
+                    "table_name": key[1],
+                    "estimated_rows_source": None,
+                    "estimated_rows_target": None,
+                    "source_error": None,
+                    "target_error": None
+                }
+            rows[key].update(result)
+            print(f"[{i}/{len(futures)}] Processed: {key[0]}.{key[1]}")
 
-    # Compare row counts
+    # Main comparison
+    merged_df = pd.DataFrame(rows.values())
     merged_df["row_count_match"] = (
         merged_df["estimated_rows_source"] == merged_df["estimated_rows_target"]
     )
 
-    save_results_to_file(filename=output_file, types_name="RowCountComparison", results=merged_df.to_dict(orient='records'))
-    # Create sets for missing entries
-    source_set = {(row["schema_name"], row["table_name"], row["estimated_rows"]) for _, row in source_df.iterrows()}
-    target_set = {(row["schema_name"], row["table_name"], row["estimated_rows"]) for _, row in target_df.iterrows()}
+    # Identify missing tables
+    source_df = merged_df[merged_df["estimated_rows_source"].notna()]
+    target_df = merged_df[merged_df["estimated_rows_target"].notna()]
+
+    source_set = {
+        (row["schema_name"], row["table_name"], row["estimated_rows_source"])
+        for _, row in source_df.iterrows()
+    }
+    target_set = {
+        (row["schema_name"], row["table_name"], row["estimated_rows_target"])
+        for _, row in target_df.iterrows()
+    }
 
     missing_in_source = target_set - source_set
     missing_in_target = source_set - target_set
 
-    # Save missing in source
-    if missing_in_source:
-        df_missing_source = pd.DataFrame(list(missing_in_source), columns=["schema_name", "table_name", "estimated_rows"])
-        save_results_to_file(filename=output_file, types_name="MissingInSource", results=df_missing_source.to_dict(orient='records'))
-    # Save missing in target
-    if missing_in_target:
-        df_missing_target = pd.DataFrame(list(missing_in_target), columns=["schema_name", "table_name", "estimated_rows"])
-        save_results_to_file(filename=output_file, types_name="MissingInTarget", results=df_missing_target.to_dict(orient='records'))
+    df_missing_source = pd.DataFrame(
+        list(missing_in_source), columns=["schema_name", "table_name", "estimated_rows"]
+    ) if missing_in_source else pd.DataFrame(columns=["schema_name", "table_name", "estimated_rows"])
+
+    df_missing_target = pd.DataFrame(
+        list(missing_in_target), columns=["schema_name", "table_name", "estimated_rows"]
+    ) if missing_in_target else pd.DataFrame(columns=["schema_name", "table_name", "estimated_rows"])
+
+    # Save results using your custom function
+    save_results_to_file(filename=output_file, types_name="RowCountComparison", results=merged_df.to_dict(orient='records'))
+    save_results_to_file(filename=output_file, types_name="MissingInSource", results=df_missing_source.to_dict(orient='records'))
+    save_results_to_file(filename=output_file, types_name="MissingInTarget", results=df_missing_target.to_dict(orient='records'))
+
     print(f"[DONE] Excel and Text File saved at {os.path.abspath(output_file)}")
