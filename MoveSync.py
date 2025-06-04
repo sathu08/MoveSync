@@ -4,16 +4,6 @@ Migration Tool - Transfer data between source and target databases.
 
 Usage:
   MoveSync.py [--database=<dbname>] [--info=<client>] [--start] [--help] [-y] [--reports] [--setup] [--startmanual]
-
-Options:
-  --database=<dbname>    Name of the database to migrate [default: postgres].
-  --info=<client>        Fetch and store database info (source, target, or both).
-  --start                Start the migration process interactively.
-  --help                 Show this help message and exit.
-  -y                     Automatically confirm the migration without prompting.
-  --reports              Generate reports for the migration process.
-  --setup                Create a configuration file for the database connection.
-  --startmanual         Start the migration process with a manual dump file.
 """
 
 import subprocess
@@ -22,7 +12,12 @@ import json
 from sqlalchemy import create_engine
 import urllib.parse
 import os
-from db_info import fetch_db_info, compare_row_counts
+from db_info import fetch_db_info, compare_row_counts, logging_setup
+
+# ---------------------------- Logging Setup ----------------------------
+logger = logging_setup("Migration.log")
+
+# ---------------------------- Core Functions ----------------------------
 
 def fetch_db_credentials(credentials_json: str):
     """Loads source and target DB credentials from a JSON file."""
@@ -34,7 +29,8 @@ def fetch_db_credentials(credentials_json: str):
             "target": credentials["target"]
         }
     except Exception as e:
-        raise Exception(f"Error loading DB credentials: {e}")
+        logger.error("Error loading DB credentials: %s", e)
+        raise
 
 def connect_to_db(user, password, host, port, database):
     """Creates a SQLAlchemy engine using PostgreSQL connection string."""
@@ -44,12 +40,13 @@ def connect_to_db(user, password, host, port, database):
         )
         return engine
     except Exception as e:
-        raise Exception(f"Error connecting to database'{database}': {e}")
+        logger.error("Error connecting to database '%s': %s", database, e)
+        raise
 
 def setup_connection():
     """Loads credentials and sets up both source and target DB connections."""
     try:
-        print("Loading DB credentials...")
+        logger.info("Loading DB credentials...")
         if not os.path.exists("db_config.json"):
             raise FileNotFoundError("Credentials file not found. Please create 'db_config.json' using --setup.")
         credentials = fetch_db_credentials("db_config.json")
@@ -57,21 +54,21 @@ def setup_connection():
         target_engine = connect_to_db(**credentials["target"])
         return credentials, source_engine, target_engine
     except Exception as e:
-        raise Exception(f"Error during setup_connection: {e}")
+        logger.error("Error during setup_connection: %s", e)
+        raise
 
 def start_migration(database_name: str, auto_confirm: bool = False):
-    """Starts the migration process by connecting to the source and target databases."""
+    """Starts the migration process using a shell script."""
     try:
-        print("Started to connect to the database...")
+        logger.info("Starting automatic migration process...")
         credentials, source_engine, target_engine = setup_connection()
 
         if not auto_confirm:
             confirm = input("Do you want to start the migration? (y/n): ").strip().lower()
             if confirm != "y":
-                print("Migration aborted.")
+                logger.info("Migration aborted by user.")
                 return
 
-        print(f"Starting migration for database '{database_name}'...")
         args = [
             "bash", "migrate_postgres.sh",
             credentials["source"]["database"],
@@ -87,23 +84,23 @@ def start_migration(database_name: str, auto_confirm: bool = False):
             "auto"
         ]
         subprocess.run(args, check=True)
-        print("Migration completed successfully.")
+        logger.info("Migration completed successfully.")
     except Exception as e:
-        raise Exception(f"Error in start_migration: {e}")
-    
+        logger.error("Error in start_migration: %s", e)
+        raise
+
 def manual_migration(database_name: str, auto_confirm: bool = False):
-    """Starts the migration process by connecting to the source and target databases."""
+    """Runs migration using a manual dump file."""
     try:
-        print("Started to connect to the database...")
+        logger.info("Starting manual migration process...")
         credentials, source_engine, target_engine = setup_connection()
 
         if not auto_confirm:
             confirm = input("Do you want to start the migration? (y/n): ").strip().lower()
             if confirm != "y":
-                print("Migration aborted.")
+                logger.info("Migration aborted by user.")
                 return
 
-        print(f"Starting migration for database '{database_name}'...")
         args = [
             "bash", "migrate_postgres.sh",
             credentials["source"]["database"],
@@ -120,16 +117,17 @@ def manual_migration(database_name: str, auto_confirm: bool = False):
             "./dump/pg_dump_20250513_114630.dump"
         ]
         subprocess.run(args, check=True)
-        print("Migration completed successfully.")
+        logger.info("Manual migration completed successfully.")
     except Exception as e:
-        raise Exception(f"Error in start_migration: {e}")
+        logger.error("Error in manual_migration: %s", e)
+        raise
 
 def info(database_name: str, client: str):
-    """Fetches and prints DB info for the given client(s)."""
+    """Fetches and logs DB info for the given client(s)."""
     try:
-        print("Connecting to the databases...")
+        logger.info("Fetching DB info for client: %s", client)
         _, source_engine, target_engine = setup_connection()
-        print(f"Fetching info for '{client}' database '{database_name}'...")
+
         if client == "source":
             fetch_db_info(source_engine, database_name, "source")
         elif client == "target":
@@ -140,19 +138,21 @@ def info(database_name: str, client: str):
         else:
             raise ValueError("Invalid client value. Use 'source', 'target', or 'both'.")
     except Exception as e:
-        raise Exception(f"Error in info: {e}")
+        logger.error("Error in info: %s", e)
+        raise
 
 def reports():
-    """Generates comparison reports between source and target databases."""
+    """Generates comparison reports."""
     try:
-        print("Connecting to the databases...")
+        logger.info("Generating migration reports...")
         _, source_engine, target_engine = setup_connection()
         compare_row_counts(source_engine, target_engine)
     except Exception as e:
-        raise Exception(f"Error in reports: {e}")
+        logger.error("Error in reports: %s", e)
+        raise
 
 def write_config_file(filename="db_config.json"):
-    """Writes a default DB config file if it doesn't exist."""
+    """Creates a template DB config file."""
     db_config = {
         "database": "database_name",
         "user": "user_name",
@@ -166,7 +166,9 @@ def write_config_file(filename="db_config.json"):
     }
     with open(filename, "w") as file:
         json.dump(config_data, file, indent=4)
-    print(f"Configuration file '{filename}' created successfully.")
+    logger.info("Configuration file '%s' created successfully.", filename)
+
+# ---------------------------- Entrypoint ----------------------------
 
 if __name__ == "__main__":
     try:
@@ -182,4 +184,4 @@ if __name__ == "__main__":
         elif args["--setup"]:
             write_config_file()
     except Exception as e:
-        print(f"Fatal error during execution: {e}")
+        logger.critical("Fatal error during execution: %s", e)
