@@ -9,11 +9,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from tabulate import tabulate
 
 # ---------------------- Logging Setup ----------------------
-def logging_setup(logger_filename: str, log_folder: str = "log"):
+def logging_setup(logger_name: str, logger_filename: str, log_folder: str = "log"):
     os.makedirs(log_folder, exist_ok=True)
     log_path = os.path.join(log_folder, logger_filename)
 
-    logger = logging.getLogger()
+    logger = logging.getLogger(logger_name)
     logger.setLevel(logging.INFO)
 
     if not logger.hasHandlers():
@@ -26,7 +26,7 @@ def logging_setup(logger_filename: str, log_folder: str = "log"):
         logger.addHandler(sh)
     return logger
 
-logger = logging_setup("Migration.log")
+logger = logging_setup("migration","migration.log")
 
 # -----------------------------------------------------------
 
